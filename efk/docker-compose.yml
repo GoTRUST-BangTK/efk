@@ -1,0 +1,104 @@
+services:
+    elasticsearch:
+        hostname: elasticsearch
+        image: maverick0809/bitnami_elasticsearch_tls_8.15.3:170124 #maverick0809/bitnami_elasticsearch_tls:8.15.3v1
+        user: '1001:1001'
+        restart: unless-stopped
+        environment:
+            CONFIG_DIR: /opt/bitnami/elasticsearch/config
+            ES_JAVA_OPTS: -Xmx${ELASTICSEARCH_HEAP} -Xms${ELASTICSEARCH_HEAP}
+        ports:
+            - '9200:9200'
+        healthcheck:
+            test: curl -s -k https://elasticsearch:9200 > /dev/null || exit 1
+            interval: 30s
+            timeout: 10s
+            retries: 5
+        ulimits:
+            memlock:
+                soft: -1
+                hard: -1
+            nofile:
+                soft: 200000
+                hard: 200000
+        networks:
+            - efk
+
+    kibana:
+        hostname: kibana
+        image: maverick0809/bitnami_kibana_tls:8.15.3v1
+        user: '1001:1001'
+        restart: unless-stopped
+        environment:
+            CONFIG_DIR: /opt/bitnami/kibana/config
+            ENCRYPTION_KEY: ${XPACK_ENCRYPTION_KEY}
+            KIBANA_ELASTICSEARCH_URL: 'https://elasticsearch:9200'
+            KIBANA_URL: https://0.0.0.0:5601
+            KIBANA_HOST: 0.0.0.0
+            KIBANA_PORT_NUMBER: 5601
+            ELASTIC_USERNAME: ${ELASTIC_USERNAME}
+            ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+        healthcheck:
+            test: curl -s -k https://kibana:5601 > /dev/null || exit 1
+            interval: 30s
+            timeout: 10s
+            retries: 5
+        ports:
+            - '5601:5601'
+        networks:
+            - efk
+        depends_on:
+            - elasticsearch
+
+    fluentd:
+        image: maverick0809/bitnami_fluentd_tls_1.17.1:191224
+        user: '1001:1001'
+        container_name: fluentd
+        ports:
+            - 24224:24224
+        environment:
+            ELASTIC_USERNAME: ${ELASTIC_USERNAME}
+            ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+            FLUENTD_USER: ${FLUENTD_USER}
+            FLUENTD_PASSWORD: ${FLUENTD_PASSWORD}
+            ELASTIC_HOST: ${ELASTIC_HOST}
+            ELASTIC_URL: 'https://${ELASTIC_HOST}:9200'
+            FLUENTD_LOG_LEVEL: 'info'  # debug, info, warm
+            SHARED_KEY: ${SHARED_KEY}
+            SELF_HOSTNAME: 172.22.163.223
+            FLUENTD_FLUSH_THREAD_COUNT: ${FLUENTD_FLUSH_THREAD_COUNT}
+            FLUENTD_CHUNK_LIMIT_SIZE: ${FLUENTD_CHUNK_LIMIT_SIZE}
+            FLUENTD_QUEUED_CHUNKS_LIMIT_SIZE: ${FLUENTD_QUEUED_CHUNKS_LIMIT_SIZE}
+            FLUENTD_TOTAL_LIMIT_SIZE: ${FLUENTD_TOTAL_LIMIT_SIZE}
+            FLUENTD_LOGSTASH_FORMAT: ${FLUENTD_LOGSTASH_FORMAT}
+            FLUENTD_ES_FLUSH_INTERVAL: ${FLUENTD_ES_FLUSH_INTERVAL}
+            FLUENTD_BUFFER_FLUSH_INTERVAL: ${FLUENTD_BUFFER_FLUSH_INTERVAL}
+        volumes:
+            - ./fluentd/bin/init.sh:/docker-entrypoint-initdb.d/init.sh
+            - ./fluentd/config/fluentd_aggregator_tls.conf:/opt/bitnami/fluentd/conf/fluentd.conf
+            - ./fluentd/secret/server:/opt/bitnami/fluentd/certs
+            # - ./fluentd/config/fluentd.conf:/opt/bitnami/fluentd/conf/fluentd.conf
+        depends_on:
+            - elasticsearch
+        networks:
+            - efk
+    # ubuntu:
+    #     image: maverick0809/autogenlog:file 
+    #     entrypoint: /autogen_log.sh
+    #     volumes:
+    #         - ./test/autogen_log.sh:/autogen_log.sh
+networks:
+    efk:
+        driver: bridge
+
+volumes:
+    elasticsearch_data:
+        driver: local
+    elasticsearch_conf:
+        driver: local
+    fluentd_conf:
+        driver: local
+    kibana_data:
+        driver: local
+    kibana_conf:
+        driver: local

@@ -1,0 +1,152 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: autogenlog
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: autogenlog
+    template:
+        metadata:
+            labels:
+                app: autogenlog
+        spec:
+            containers:
+                - image: bitnami/fluent-bit:3.2.2-debian-12-r0
+                  name: fluentbit
+                  imagePullPolicy: Always
+                  env:
+                      - name: LOG_TAG
+                        value: 'hdbank'
+                      - name: LOG_PATH
+                        value: '/app/logs/*.txt'
+                      - name: STORAGE_BACKLOG
+                        value: '160G'
+                      - name: REFRESH_INTERVAL
+                        value: '1'
+                      - name: BUFFER_CHUNK_SIZE
+                        value: '512KB'
+                      - name: BUFFER_MAX_SIZE
+                        value: '10M'
+                      - name: FLUENTD_HOST
+                        value: '172.22.163.223'
+                      - name: FLUENTD_PORT
+                        value: '24224'
+                  securityContext:
+                      runAsUser: 0
+                      privileged: true
+                  volumeMounts: 
+                      - name: fluent-bit-config-hdbank
+                        mountPath: /opt/bitnami/fluent-bit/conf
+                      - name: fluent-bit-secrets
+                        mountPath: /opt/bitnami/fluent-bit/certs
+                      - name: logs
+                        mountPath: /app/logs
+
+                - image: maverick0809/autogenlog:hdbank-medipay-api #maverick0809/autogenlog:edupay_console #maverick0809/autogenlog:file
+                  imagePullPolicy: Always
+                  name: autogenlog
+                  volumeMounts:
+                      - name: logs
+                        mountPath: /app/logs
+            volumes:
+                - name: fluent-bit-config
+                  configMap:
+                      name: fluent-bit-config
+                      items:
+                          - key: 'fluent-bit.conf'
+                            path: 'fluent-bit.conf'
+                          - key: 'lua_script.lua'
+                            path: 'lua_script.lua'
+                - name: fluent-bit-secrets
+                  secret:
+                      secretName: fluent-bit-secrets
+                      items:
+                          - key: 'client.crt'
+                            path: 'client.crt'
+                          - key: 'client.key'
+                            path: 'client.key'
+                          - key: 'ca-cert.pem'
+                            path: 'ca-cert.pem'
+                - name: logs
+                  emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: fluent-bit-config-hdbank
+    namespace: aicare-service
+    labels:
+        cm: fluent-bit
+data:
+    fluent-bit.conf: |-
+      [SERVICE]
+          Flush         1
+          Log_Level     debug
+          Daemon        off
+          DB            /opt/bitnami/fluent-bit/db/fluentbit.db
+          storage.path  /opt/bitnami/fluent-bit/db
+          storage.sync  full
+          storage.backlog.mem_limit ${STORAGE_BACKLOG}
+          parsers_file  /opt/bitnami/fluent-bit/conf/parser_json.conf
+
+      [INPUT]
+          Name                tail
+          Tag                 ${LOG_TAG}
+          Path                ${LOG_PATH}
+          Refresh_Interval    1
+          Buffer_Chunk_Size   ${BUFFER_CHUNK_SIZE}
+          Buffer_Max_Size     ${BUFFER_MAX_SIZE}
+          
+      [FILTER]
+          Name    lua
+          Match   ${LOG_TAG}
+          script  /opt/bitnami/fluent-bit/conf/lua_script.lua
+          call    transform_log
+
+      [OUTPUT]
+          Name              forward
+          Host              ${FLUENTD_HOST}
+          Port              ${FLUENTD_PORT}
+          tls               on
+          tls.verify        on
+          tls.debug         4                     
+          tls.ca_file       /opt/bitnami/fluent-bit/certs/ca-cert.pem
+          tls.crt_file      /opt/bitnami/fluent-bit/certs/client.crt
+          tls.key_file      /opt/bitnami/fluent-bit/certs/client.key
+          Shared_Key        somesuperlongstringlikethisoneMQBbtsynu4bV2uxLy
+          Match             *
+
+    lua_script.lua: |-
+        function json_decode(str)
+            local json = {}
+            str = str:gsub('"%s*([^"]+)%s*"%s*:%s*"%s*([^"]+)%s*"', function(k, v)
+                json[k] = v
+            end)
+            return json
+        end
+
+        function remove_keys(json_str, keys)
+            for _, keyword in ipairs(keys) do
+                local pattern = '"%s*' .. keyword .. '%s*":%s*"%s*([^"]+)%s*",%s*'
+                json_str = json_str:gsub(pattern, '')
+            end
+            return json_str
+        end
+
+        function transform_log(tag, timestamp, record)
+            local log_str = record["log"]
+            local log_str_ = record["log"]
+            local log_record = json_decode(log_str)
+            local keys_to_remove = {"@t", "@mt","RequestId" }
+
+            record["Message"] = remove_keys(log_str_,keys_to_remove)
+            record["Timestamp"] = log_record["@t"]
+            record["MessageTemplate"] = log_record["@mt"]
+            record["RequestId"] = log_record["RequestId"]
+            record["log"] = nil
+
+            return 1, timestamp, record
+        end
+        

@@ -1,0 +1,177 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: autogenlog
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: autogenlog
+    template:
+        metadata:
+            labels:
+                app: autogenlog
+        spec:
+            containers:
+                - image: bitnami/fluent-bit:3.2.2-debian-12-r0
+                  name: fluentbit
+                  imagePullPolicy: Always
+                  env:
+                      - name: LOG_TAG
+                        value: 'edupay.multiline'
+                      - name: LOG_PATH
+                        value: '/var/log/containers/*autogenlog*autogenlog*.log'
+                      - name: STORAGE_BACKLOG
+                        value: '160G'
+                      - name: REFRESH_INTERVAL
+                        value: '1'
+                      - name: BUFFER_CHUNK_SIZE
+                        value: '512KB'
+                      - name: BUFFER_MAX_SIZE
+                        value: '10M'
+                      - name: FLUENTD_HOST
+                        value: '172.22.163.223'
+                      - name: FLUENTD_PORT
+                        value: '24224'
+                  securityContext:
+                      runAsUser: 0
+                      privileged: true
+                  volumeMounts: 
+                      - name: fluent-bit-config
+                        mountPath: /opt/bitnami/fluent-bit/conf
+                      - name: fluent-bit-secrets
+                        mountPath: /opt/bitnami/fluent-bit/certs
+                      - name: varlog
+                        mountPath: /var/log
+                      - name: varlibdockercontainers
+                        mountPath: /var/lib/docker/containers
+                        readOnly: true
+
+                - image: maverick0809/autogenlog:hdbank-medipay-api #maverick0809/autogenlog:edupay_console #maverick0809/autogenlog:file
+                  imagePullPolicy: Always
+                  name: autogenlog
+
+            volumes:
+                - name: fluent-bit-config
+                  configMap:
+                      name: fluent-bit-config
+                      items:
+                          - key: 'fluent-bit.conf'
+                            path: 'fluent-bit.conf'
+                          - key: 'parser_json.conf'
+                            path: 'parser_json.conf'
+                          - key: 'lua_script.lua'
+                            path: 'lua_script.lua'
+                - name: fluent-bit-secrets
+                  secret:
+                      secretName: fluent-bit-secrets
+                      items:
+                          - key: 'client.crt'
+                            path: 'client.crt'
+                          - key: 'client.key'
+                            path: 'client.key'
+                          - key: 'ca-cert.pem'
+                            path: 'ca-cert.pem'
+                - name: varlog
+                  hostPath:
+                      path: /var/log
+                - name: varlibdockercontainers
+                  hostPath:
+                      path: /var/lib/docker/containers
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: fluent-bit-config-edupay
+    labels:
+        cm: fluent-bit
+data:
+    fluent-bit.conf: |-
+        [SERVICE]
+            Flush         1
+            Log_Level     debug
+            Daemon        off
+            DB            /opt/bitnami/fluent-bit/db/fluentbit.db
+            storage.path  /opt/bitnami/fluent-bit/db
+            storage.sync  full
+            storage.backlog.mem_limit ${STORAGE_BACKLOG}
+            parsers_file  /opt/bitnami/fluent-bit/conf/parser_json.conf
+
+        [INPUT]
+            Name                tail
+            Parser              json
+            Tag                 ${LOG_TAG}
+            Path                ${LOG_PATH}
+            Refresh_Interval    1
+            Buffer_Chunk_Size   ${BUFFER_CHUNK_SIZE}
+            Buffer_Max_Size     ${BUFFER_MAX_SIZE}
+
+        [FILTER]
+            Name modify
+            Match *
+            Remove time
+            Remove stream
+
+        [FILTER]
+            Name    lua
+            Match   ${LOG_TAG}
+            Script  /opt/bitnami/fluent-bit/conf/lua_script.lua
+            Call    transform_log
+        
+        [OUTPUT]
+            Name              forward
+            Host              ${FLUENTD_HOST}
+            Port              ${FLUENTD_PORT}
+            tls               on
+            tls.verify        on
+            tls.debug         4
+            tls.ca_file       /opt/bitnami/fluent-bit/certs/ca-cert.pem
+            tls.crt_file      /opt/bitnami/fluent-bit/certs/client.crt
+            tls.key_file      /opt/bitnami/fluent-bit/certs/client.key
+            Shared_Key        somesuperlongstringlikethisoneMQBbtsynu4bV2uxLy
+            Match             *
+
+    parser_json.conf: |-
+        [PARSER]
+            Name        json
+            Format      json
+            Time_Key    Timestamp
+            Time_Keep   On
+
+    lua_script.lua: |-
+
+        function get_timestamp(str)
+            return string.match(str, "%d%d:%d%d:%d%d")
+        end
+
+        function remove_timestamp(log_str)
+            local pattern = "%[%d%d:%d%d:%d%d .*%]"
+            return log_str:gsub(pattern, "")
+        end
+
+        function get_log_level(log_str)
+            local level = string.match(log_str, "%[%d%d:%d%d:%d%d (%u%u%u)%]")
+            return level 
+        end
+
+        function parse_time(time_str)
+            local h, m, s = time_str:match("(%d+):(%d+):(%d+)")
+            local full_time_str
+            if h and m and s then
+                local current_date = os.date("%Y-%m-%d") 
+                full_time_str = string.format("%sT%s:%s:%sZ", current_date, h, m, s)
+            end
+            return full_time_str
+        end
+
+        function transform_log(tag, timestamp, record)
+            local log_str = cb_filter(record["log"])
+            2
+            record["timestamp"] = parse_time( get_timestamp(log_str) )
+            record["level"] = get_log_level(log_str)  
+            record["log"] = remove_timestamp(log_str)
+
+            return 1, timestamp, { timestamp = record["timestamp"], log = record["log"], level = record["level"] }
+        end
+        
