@@ -1,0 +1,28 @@
+1. Tạo chính sách ILM xóa sau 30 days
+PUT _ilm/policy/delete-after-30d
+{
+  "policy": {
+    "phases": {
+      "hot": {
+        "actions": {}
+      },
+      "delete": {
+        "min_age": "30d",
+        "actions": {
+          "delete": {}
+        }
+      }
+    }
+  }
+}
+
+- Nếu đã có các chỉ mục cũ và muốn áp dụng chính sách này, bạn cần cập nhật thiết lập (_settings) cho từng chỉ mục hoặc dùng wildcard phù hợp
+PUT */_settings
+{
+  "settings": {
+    "index.lifecycle.name": "delete-after-30d"
+  }
+}
+
+- check
+GET */_ilm/explain
