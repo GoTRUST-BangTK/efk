@@ -1,57 +1,98 @@
-# Setup EFK stack with TLS communication
-This project focuses on deploying an EFK stack, with the *__bitnami edition__* in *bitnami.efk* and an *elastic edition* in *elastic.efk* folder used for expansion.
-## Setup
-### Generate the new set of keys 
-This command will create the folder named *secrets* containing a set of keys for the EFK stack and more.
-```
-cd setup ; docker compose -f docker-compose.yml run --rm certs
-``` 
-### Replace the set of keys 
-After generating the set of keys, if you want to replace the set of keys, use this script to update the keys in the _bitnami.efk_ folder:
-```
-cd setup/bin ; bash replace_keys.sh
-```
-## Get started
-### Bitnami Edition
-#### Running
-In this edition in *bitnami.efk* folder, configurations for both single-node and cluster modes are completed for Compose and Swarm modes in docker. The _template_ folder contains the Compose and Swarm stack templates. Use the following command to simply run this stack:
-```
-cd bitnami.efk/template/compose; docker compose -f <compose file> up  
-```
-If you have set up a swarm cluster, you can run this command.
-```
-cd bitnami.efk/template/swarm; docker compose -f <swarm file> up  
-```
-#### Configuration
-By default, this stack uses version 8.15.3 of *bitnami edition*. Here are some key configuration details:
--   **Kibana**: Starting with version 8.x, Kibana no longer supports _username:password_  authentication with Elasticsearch. To address this, I configured it to automatically retrieve the _service account token_ from Elasticsearch and apply it to _kibana.yml_. You can review this configuration in _kibana/bin/entrypoint.sh_.
+
+# Setup EFK Stack with TLS Communication
+
+## **Configuring TLS Certificates**
+
+### **Elasticsearch + Kibana TLS Communication**
+
+-   In the root directory, run the following command to generate certificates for Elasticsearch, Kibana, etc.:
+       
+    `cd setup ; docker compose -f docker-compose.yml run --rm certs` 
     
--   **Elasticsearch**: Configuration files are located in _elasticsearch/config_. In detail, _elasticsearch.yml_ is used for single-node mode, while _elasticsearch[123].yml_ files support cluster mode. You can expand your cluster by basing on the configuration of _elasticsearch[123].yml_ to write new elasticsearch[x].yml and build new images.
+-   Once the command completes, you will find the generated certificates in the `setup/secrets` directory:
     
--   **Fluentd**: Configuration for Fluentd to collect logs itself is implemented in _/fluentd/bin/init.sh_.
+    ![Certificates location](https://res.cloudinary.com/dgiozc0lj/image/upload/v1740642949/ydfsmyrhqn4dh0ibhaiv.jpg)
+    
+-   Move the certificates to the appropriate locations as follows:
+    
+    -   `setup/secrets/elasticsearch.keystore` → `efk/elasticsearch/secret`
+    -   `setup/secrets/elasticsearch/*` → `efk/elasticsearch/secret`
+    -   `setup/secrets/kibana/*` → `efk/kibana/secret`
+    -   `setup/secrets/certificate_authority/ca/ca.crt` → `efk/elasticsearch/secret`
+    -   `setup/secrets/certificate_authority/ca/ca.crt` → `efk/kibana/secret`
+    -   `setup/secrets/certificate_authority/ca/ca.crt` → `efk/fluentd/secret`
+    
+    **Note:** Change the default password for Elasticsearch by updating the `ELASTIC_PASSWORD` variable in `setup/.env`.
+    
+-   After generating and moving the certificates, navigate to each directory (`elasticsearch`, `kibana`, `fluentd`) and build the corresponding images.  
+    Example for Kibana:
+        
+    `cd efk/kibana ; docker build -t <tag> .` 
+    
+-   Once the images are built, update the `efk/docker-swarm.yml` file with the correct image references for each service.
+    
+    ✅ **Elasticsearch + Kibana TLS communication setup is now complete.**
+    
 
+----------
 
+### **Fluentbit + Fluentd TLS Communication**
 
-### Elastic Edition
-In this edition in the *elastic.efk, it currently just includes elasticseach with single-node and kibana configs. This setup functions effectively and can be tested with:
-```
-cd elastic.efk ; docker compose up
-```
+-   Run the following command to generate certificates for Fluentbit and Fluentd:
+        
+    `cd setup/bin ; bash gen_fluent_certs.sh` 
+    
+    The output should look like this:    
+    ![Fluentbit & Fluentd certificates](https://res.cloudinary.com/dgiozc0lj/image/upload/v1740643917/hpzyo3wvr1o11euy5cgs.jpg)
+    
+-   Move the generated certificates as follows:
+    
+    -   `setup/bin/client.*` → `efk/fluentbit/secret/client`
+    -   `setup/bin/server.*` → `efk/fluentd/secret/server`
+    -   `setup/bin/ca-cert.pem` → `efk/fluentbit/secret/client`
+    -   `setup/bin/ca-cert.pem` → `efk/fluentd/secret/server`
+-   These certificates are referenced in the Fluentbit/Fluentd configuration files inside their respective directories.
+    
+-   To build images for testing, navigate to `efk/fluent(d | bit)` and run:
+        
+    `docker build -t <tag> .` 
+    
 
+----------
 
-## Reference
-+ Github repo referenced:
- https://github.com/swimlane/elk-tls-docker
-+ Bitnami 
-	+ Dockerfile
-		https://github.com/bitnami/containers
-	+ Docker Hub
-		https://hub.docker.com/r/bitnami/ 
-+ Elastic 
-	+ Dockerfile
-	https://github.com/elastic
-	+ Docker Hub
-	https://hub.docker.com/u/elastic
-+ Document:
-https://www.elastic.co/guide/en/elasticsearch/reference/8.15/configuring-tls.html
-https://www.elastic.co/guide/en/kibana/8.15/configuring-tls.html
+## **Elasticsearch Lifecycle (Auto-delete Indexes After 30 Days)**
+
+-   Inside the `es.lifecycle` folder, there is a file named `autodelete.txt`.
+    
+-   To apply these settings in Elasticsearch:
+    
+    1.  Open **Kibana**.
+    2.  Go to **Kibana Console**.
+    3.  Execute the requests in `autodelete.txt` in sequence.
+    
+    ![Elasticsearch Lifecycle](https://res.cloudinary.com/dgiozc0lj/image/upload/v1740645131/sctkurhzq0d7l8ohybax.jpg)
+    
+
+----------
+
+## **Configuring Log Forwarding with Sidecar on Kubernetes**
+
+-   Since real-world applications generate logs with **many records and fields**, using **JSON parser in Fluentbit** is **not optimal**. Instead, a **Lua script** can be used for greater flexibility in processing complex logs.
+    
+-   Example of log transformation:
+    
+    -   Rename and extract required fields such as:
+        -   `@t` → **Timestamp**
+        -   `@mt` → **MessageTemplate**
+        -   `RequestId`
+    -   Remove unnecessary fields: `@t`, `@mt`, `RequestId`.
+    
+    ![Log transformation](https://res.cloudinary.com/dgiozc0lj/image/upload/v1740645883/n5yoo8uc6n1hlntcmpmw.jpg)
+    
+-   **Lua script configuration explanation:**
+    
+    -   `json_decode`: Parses a string into a JSON object.
+    -   `remove_keys`: Finds and replaces specified fields with `''` (empty).
+    -   `transform_log`: The main function called at the **filter stage** in Fluentbit, which applies transformations using the helper functions.
+    
+    ![Lua script](https://res.cloudinary.com/dgiozc0lj/image/upload/v1740645883/orquqtjj88vk7osoowwf.jpg)

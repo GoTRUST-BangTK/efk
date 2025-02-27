@@ -1,4 +1,4 @@
-1. Tạo chính sách ILM xóa sau 30 days
+1. Create ILM policy after 30 days
 PUT _ilm/policy/delete-after-30d
 {
   "policy": {
@@ -16,7 +16,7 @@ PUT _ilm/policy/delete-after-30d
   }
 }
 
-- Nếu đã có các chỉ mục cũ và muốn áp dụng chính sách này, bạn cần cập nhật thiết lập (_settings) cho từng chỉ mục hoặc dùng wildcard phù hợp
+2 If you already have old indexes and want to apply this policy, you need to update the settings (_Settings) to each index or use the appropriate wildcard.
 PUT */_settings
 {
   "settings": {
@@ -24,5 +24,5 @@ PUT */_settings
   }
 }
 
-- check
+3 check
 GET */_ilm/explain

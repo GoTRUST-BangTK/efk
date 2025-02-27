@@ -1,8 +1,0 @@
-POST _snapshot/elastic_slm_repository/medipay-snapshot-2024-12-23/_restore
-{
-  "indices": "medipay_api*",  # Tên các chỉ mục bạn muốn khôi phục
-  "ignore_unavailable": true,  # Bỏ qua các chỉ mục không có sẵn
-  "include_global_state": false # Chỉ khôi phục dữ liệu chỉ mục, không bao gồm cấu hình global state
-}
-
-GET _cat/recovery?v

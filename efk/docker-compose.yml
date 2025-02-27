@@ -1,7 +1,7 @@
 services:
     elasticsearch:
         hostname: elasticsearch
-        image: maverick0809/bitnami_elasticsearch_tls_8.15.3:170124 #maverick0809/bitnami_elasticsearch_tls:8.15.3v1
+        image: maverick0809/bitnami_elasticsearch_tls_8.15.3:170124 
         user: '1001:1001'
         restart: unless-stopped
         environment:
@@ -77,16 +77,10 @@ services:
             - ./fluentd/bin/init.sh:/docker-entrypoint-initdb.d/init.sh
             - ./fluentd/config/fluentd_aggregator_tls.conf:/opt/bitnami/fluentd/conf/fluentd.conf
             - ./fluentd/secret/server:/opt/bitnami/fluentd/certs
-            # - ./fluentd/config/fluentd.conf:/opt/bitnami/fluentd/conf/fluentd.conf
         depends_on:
             - elasticsearch
         networks:
             - efk
-    # ubuntu:
-    #     image: maverick0809/autogenlog:file 
-    #     entrypoint: /autogen_log.sh
-    #     volumes:
-    #         - ./test/autogen_log.sh:/autogen_log.sh
 networks:
     efk:
         driver: bridge
